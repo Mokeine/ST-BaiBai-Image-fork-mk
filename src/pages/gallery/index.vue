@@ -367,6 +367,53 @@ const selected = ref(new Set<string>());
 const deleting = ref(false);
 
 const selectedCount = computed(() => selected.value.size);
+/**
+ * 「选中当前」的口径 = **此刻真正显示出来的缩略图**:先按搜索框过滤,再按各组
+ * 已展开的张数(visibleImages,见「展开更多」)截取。所以它是"所见即所选"。
+ */
+const visibleKeys = computed(() => filtered.value.flatMap(group => visibleImages(group).map(image => image.key)));
+/** 「全选」的口径 = **整个图库**:忽略搜索过滤与展开限制。 */
+const libraryKeys = computed(() => groups.value.flatMap(group => group.images.map(image => image.key)));
+
+function selectVisible(): void {
+  selected.value = new Set(visibleKeys.value);
+}
+
+function selectAllInLibrary(): void {
+  selected.value = new Set(libraryKeys.value);
+}
+
+/**
+ * 「反选」:在**当前显示**的这批里逐个翻转(未选→选、已选→取消),作用域与「选中当前」相同。
+ * 作用域之外的已选项**保持不动** —— 反选是"翻转这一屏",不是"清掉你看不见的选择",
+ * 悄悄丢弃用户先前的选择比多点几下更糟。
+ */
+function invertVisible(): void {
+  const next = new Set(selected.value);
+  for (const key of visibleKeys.value) {
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+  }
+  selected.value = next;
+}
+
+/**
+ * 拖动缩略图 = 拖出一个「文件」:设置 DownloadURL 后浏览器按**下载**处理 ——
+ * 拖到桌面/资源管理器就是保存这个文件,之后双击由系统默认程序打开。
+ *
+ * 不设置它的话,浏览器拿图片 URL 当拖拽载荷:拖到地址栏或页面空白会被当成搜索,
+ * 于是打开谷歌搜索页(旧行为)。
+ */
+function onImageDragStart(event: DragEvent, image: { src: string; file: string }): void {
+  const dt = event.dataTransfer;
+  if (!dt) return;
+  const url = new URL(image.src, location.href).href;
+  const mime = image.file.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+  dt.setData('DownloadURL', `${mime}:${image.file}:${url}`);
+  dt.effectAllowed = 'copy';
+  // 别让酒馆自己的拖拽处理器再插一手
+  event.stopPropagation();
+}
 
 function toggleSelecting(): void {
   selecting.value = !selecting.value;
@@ -492,7 +539,29 @@ async function open(image: GalleryImage): Promise<void> {
       pending.value = '';
     }
   }
-  openLightbox({ src: image.src, filename: image.download, prompt: prompt ?? '' });
+  // A/D 翻页范围 = **同一角色分组**内的图片(按显示顺序)。prompt 已缓存的直接带上,
+  // 其余按需取:默认不显示信息框,按 S 时才请求当前这张。
+  const group = groups.value.find(g => g.images.some(i => i.key === image.key));
+  const items = group?.images ?? [image];
+  openLightbox({
+    src: image.src,
+    filename: image.download,
+    prompt: prompt ?? '',
+    list: items.map(i => ({
+      src: i.src,
+      filename: i.download,
+      key: i.key,
+      prompt: i.key === image.key ? (prompt ?? '') : (promptCache.value.get(i.key) ?? ''),
+    })),
+    index: Math.max(0, items.findIndex(i => i.key === image.key)),
+    onRequestPrompt: async item => {
+      const cached = promptCache.value.get(item.key ?? '');
+      if (cached != null) return cached;
+      const text = (await fetchSidecarPrompt(item.key ?? '')) ?? '';
+      promptCache.value = new Map(promptCache.value).set(item.key ?? '', text);
+      return text;
+    },
+  });
 }
 </script>
 
@@ -532,6 +601,33 @@ async function open(image: GalleryImage): Promise<void> {
          角色多时按下去屏幕上什么都不动,像没生效);吸顶又保证往下翻多久都还在。 -->
     <div v-if="selecting" class="gal-actionbar">
       <span class="gal-actionbar-count">已选 {{ selectedCount }} 张</span>
+      <button
+        class="bbi-btn bbi-btn-sm"
+        type="button"
+        :disabled="!visibleKeys.length || deleting"
+        :title="`选中此刻显示出来的全部 ${visibleKeys.length} 张(受搜索与「展开更多」影响)`"
+        @click="selectVisible"
+      >
+        选中当前
+      </button>
+      <button
+        class="bbi-btn bbi-btn-sm"
+        type="button"
+        :disabled="!visibleKeys.length || deleting"
+        :title="`翻转此刻显示出来的这 ${visibleKeys.length} 张(作用域同「选中当前」,其余已选不动)`"
+        @click="invertVisible"
+      >
+        反选
+      </button>
+      <button
+        class="bbi-btn bbi-btn-sm"
+        type="button"
+        :disabled="!libraryKeys.length || deleting"
+        :title="`选中整个图库的 ${libraryKeys.length} 张(忽略搜索与展开限制)`"
+        @click="selectAllInLibrary"
+      >
+        全选
+      </button>
       <button
         class="bbi-btn bbi-btn-sm"
         type="button"
@@ -632,7 +728,14 @@ async function open(image: GalleryImage): Promise<void> {
                     :aria-pressed="selecting ? selected.has(image.key) : undefined"
                     @click="onThumbClick(image)"
                   >
-                    <img class="gal-img" :src="image.src" :alt="`${group.name} 的生成图`" loading="lazy" />
+                    <img
+                      class="gal-img"
+                      :src="image.src"
+                      :alt="`${group.name} 的生成图`"
+                      loading="lazy"
+                      draggable="true"
+                      @dragstart="onImageDragStart($event, image)"
+                    />
                     <!-- 勾选角标:只在选择态出现,选中时填充主色 -->
                     <span v-if="selecting" class="gal-check" aria-hidden="true">
                       <Icon v-if="selected.has(image.key)" name="check" :size="13" />

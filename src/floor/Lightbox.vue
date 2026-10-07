@@ -37,6 +37,11 @@ const props = defineProps<{
   filename?: string;
   /** 有值才显示删除按钮。 */
   deletable?: boolean;
+  /**
+   * 是否显示下方信息框(提示词)。由调用方(键盘 S 键)**显式控制**,
+   * 不用 CSS 类隐藏 —— v-if 直接决定它存不存在,不会留下任何残留状态。
+   */
+  showInfo?: boolean;
 }>();
 
 const emit = defineEmits<{ close: []; delete: [] }>();
@@ -190,7 +195,7 @@ const promptText = computed(() => (props.prompt ?? '').trim());
         />
       </div>
 
-      <p v-if="promptText" class="bbi-lightbox__prompt" @click.stop>{{ promptText }}</p>
+      <p v-if="promptText && showInfo !== false" class="bbi-lightbox__prompt" @click.stop>{{ promptText }}</p>
     </div>
   </Teleport>
 </template>

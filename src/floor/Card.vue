@@ -24,8 +24,9 @@ import {
   slotKey,
 } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
+import { fetchPromptFor, listCharacterImageItems } from '@/floor/galleryData';
 import { openLightbox } from '@/floor/lightbox';
-import { confirmImageMissing, isImageMissing } from '@/floor/missingImages';
+import { confirmImageMissing, isImageMissing, normalizeImagePath } from '@/floor/missingImages';
 import { openPromptEditor } from '@/floor/promptEditor';
 import {
   deleteImageResult,
@@ -323,11 +324,25 @@ function openImage(): void {
   // 就地取值:灯箱挂在插件 shadow root,**活得比本卡片长**——任一兄弟槽位出图都会
   // 重水合销毁本组件,而灯箱还开着。回调里再读 props 就是读已销毁实例,故全部先快照。
   const at = { messageId: props.messageId, swipeId: props.swipeId };
-  openLightbox({
-    src: entry.path,
-    prompt: promptText.value,
-    filename: downloadFileName(entry),
-    onDelete: () => void removeEntry(entry, at),
+  const src = entry.path;
+  const prompt = promptText.value;
+  const filename = downloadFileName(entry);
+  const context = getContext();
+  const characterName = context?.chat[props.messageId]?.name || context?.name2 || '';
+  // 与图库同款:翻页范围 = **该角色目录下的全部图片**(不是只有本楼这几张)。
+  // 目录读不到时退化成单图:灯箱照常打开,只是 A/D 不动。
+  void listCharacterImageItems(characterName).then(list => {
+    const wanted = normalizeImagePath(src);
+    const index = Math.max(0, list.findIndex(item => item.key === wanted));
+    openLightbox({
+      src,
+      prompt,
+      filename,
+      ...(list.length ? { list, index } : {}),
+      // 提示词按需取:默认不显示信息框,按 S 才请求当前这张
+      onRequestPrompt: async item => (item.key ? await fetchPromptFor(item.key) : ''),
+      onDelete: () => void removeEntry(entry, at),
+    });
   });
 }
 
