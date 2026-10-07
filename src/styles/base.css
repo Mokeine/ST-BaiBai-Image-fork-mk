@@ -291,6 +291,40 @@
   /* Chrome/Safari */
 }
 
+/* —— 例外:长文本框要能**用鼠标拖**滚动条 ——
+   上面那条把整个 UI 的滚动条都藏了,对页面级滚动/列表滚动是好事(少一圈视觉噪音)。
+   但「请求历史」的分段全文、消息块编辑这类长文本方框里,藏掉之后只能靠滚轮或键盘翻,
+   鼠标没有可抓的地方 —— 这些地方显式放回来。
+   两套属性必须都写:scrollbar-width / scrollbar-color 是 Firefox 唯一认的口径
+   (::-webkit-scrollbar 在 Firefox 里完全无效),::-webkit-scrollbar 是 Chrome/Safari 的老口径。
+   只写一套 = 在某些浏览器里等于没写。Chrome 121+ 也支持标准属性,那时以标准属性为准,
+   两条路都给"可见且可拖",观感差异可接受。 */
+.bbi-root .bbi-scrollbars {
+  scrollbar-width: auto;
+  scrollbar-color: var(--bbi-line-strong) var(--bbi-surface-2);
+}
+.bbi-root .bbi-scrollbars::-webkit-scrollbar {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+.bbi-root .bbi-scrollbars::-webkit-scrollbar-track {
+  background: var(--bbi-surface-2);
+  border-radius: var(--bbi-radius-pill);
+}
+.bbi-root .bbi-scrollbars::-webkit-scrollbar-thumb {
+  /* 3px 透明边框 = 视觉上细,可抓区域仍是 12px 宽(细滚动条最难的就是抓不住) */
+  background: var(--bbi-line-strong);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--bbi-radius-pill);
+}
+.bbi-root .bbi-scrollbars::-webkit-scrollbar-thumb:hover {
+  background: var(--bbi-ink-muted);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
 /* ============ 响应式:移动端整屏(底部抽屉式) ============ */
 @media (max-width: 640px) {
   .bbi-overlay {

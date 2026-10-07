@@ -5,6 +5,8 @@ const MENU_ITEM_ID = 'bbi-menu-item';
 /**
  * 往 ST 的 #extensionsMenu(魔杖菜单)末尾注入"柏宝绘"入口。
  * 菜单是懒加载的,用轮询等它出现;注入一次即可。
+ *
+ * 注:加载动画只做在**屏幕悬浮球**(components/FloatingOrb.vue)上,这里保持原样。
  */
 export function injectMenuButton() {
   const tryInject = () => {

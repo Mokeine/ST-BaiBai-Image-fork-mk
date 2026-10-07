@@ -26,6 +26,7 @@ describe('auto tag position protocol', () => {
         { position: 'P1', sourceLine: 0, tag: 'first scene', nl: '', negative: '', characters: [], size: 'portrait' },
       ],
       changes: [],
+      outfits: [],
     });
   });
 
@@ -44,6 +45,7 @@ describe('auto tag position protocol', () => {
     expect(parseImagePlanWithRange('{"images":[],"changes":[]}', segments, 0, 2)).toEqual({
       images: [],
       changes: [],
+      outfits: [],
     });
   });
 
@@ -68,6 +70,7 @@ describe('auto tag position protocol', () => {
     expect(parseImagePlan('{"images":[{"position":"P1","prompt":"scene"}]}', segments, 1)).toEqual({
       images: [{ position: 'P1', sourceLine: 0, tag: 'scene', nl: '', negative: '', characters: [], size: 'portrait' }],
       changes: [],
+      outfits: [],
     });
   });
 
@@ -86,6 +89,7 @@ describe('auto tag position protocol', () => {
         },
       ],
       changes: [],
+      outfits: [],
     });
   });
 
@@ -116,6 +120,7 @@ describe('auto tag position protocol', () => {
         { position: 'P1', sourceLine: 0, tag: '2girls', nl: '', negative: '', characters: [], size: 'landscape' },
       ],
       changes: [],
+      outfits: [],
     });
   });
 
@@ -359,6 +364,7 @@ describe('changes parsing', () => {
     expect(parseImagePlan('{"images":[],"changes":[]}', segments, 1)).toEqual({
       images: [],
       changes: [],
+      outfits: [],
     });
   });
 });

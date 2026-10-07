@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildAutoTagMessages } from '@/autoTag/prompt';
+import { buildAutoTagAssembly, buildAutoTagMessages } from '@/autoTag/prompt';
 import {
   activeComfyPreset,
   settings,
@@ -69,7 +69,9 @@ describe('auto tag prompt', () => {
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
 
-    expect(messages[0].content).toContain('附加规则');
+    expect(messages[0].content).toContain('sanctuary_override_directive');
+    // 旧字段不再流进默认预设:它只是"回退旧版本仍有效"的存档
+    expect(messages[0].content).not.toContain('附加规则');
     expect(messages.some(m => m.role === 'system' && m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))).toBe(true);
     expect(messages.some(m => m.content.includes('除一个 <thinking> 块和一个 JSON 对象外'))).toBe(true);
     expect(messages.some(m => m.content.includes('最终结果必须包含且只能包含一个可解析的 JSON 对象'))).toBe(true);
@@ -299,7 +301,9 @@ describe('auto tag prompt', () => {
     expect(last.content).toBe('<thinking>');
   });
 
-  it('uses custom thinking/prefill when provided', async () => {
+  // 旧字段(0.4.0 之前的 6 个可编辑项)现在是存档:默认预设一律用仓库内置提示词,
+  // 所以在这里改思维链/预填充**不会**影响实际发出去的内容。
+  it('ignores custom thinking/prefill from the legacy fields', async () => {
     const options: AutoTagSettings = {
       enabled: true,
       contextMessages: 2,
@@ -311,13 +315,15 @@ describe('auto tag prompt', () => {
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
 
-    expect(messages.some(m => m.content.includes('自定义清单'))).toBe(true);
-    expect(messages.some(m => m.content.includes('输出前思考清单'))).toBe(false);
-    expect(messages[messages.length - 1].content).toBe('custom>');
+    expect(messages.some(m => m.content.includes('自定义清单'))).toBe(false);
+    expect(messages.some(m => m.content.includes('输出前思考清单'))).toBe(true);
+    expect(messages[messages.length - 1].content).toBe('<thinking>');
+    expect(messages.some(m => m.content.includes('custom>'))).toBe(false);
   });
 
-  // 思维链按后端各存一份。改 ComfyUI 那份不能影响 NAI——共用一份正是 V5 被要求填
-  // 「景别/环境光/邻接绑定」这类它的规范从未教过的字段的根因。
+  // 思维链各有独立一份块。默认预设按**当前后端/模型**只启用匹配的那一份,
+  // 另两份留着但不发 —— 交叉发出正是 V5 被要求填「景别/环境光/邻接绑定」这类
+  // 它的规范从未教过的字段的根因。
   it('picks the thinking checklist per backend and never crosses them over', async () => {
     const options: AutoTagSettings = {
       enabled: true,
@@ -326,37 +332,28 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      prompts: prompts({
-        comfyThinking: 'COMFY-CHECKLIST',
-        naiThinking: 'NAI-CHECKLIST',
-        naiV5Thinking: 'NAIV5-CHECKLIST',
-      }),
+      prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
     const oldModel = settings.nai.model;
     try {
       const cases = [
-        { backend: 'comfyui', model: oldModel, want: 'COMFY-CHECKLIST' },
+        { backend: 'comfyui', model: oldModel, live: 'ComfyUI 思维链' },
         // 单串分支的代表换成原版 NAI4:4.5 起走 Character Prompts 分支(自然语言是 4.5 引入的)
-        // ⚠ NAI4 已从 NAI_MODELS 撤下(设置页选不到了),但 prompt.ts 的单串分支与
-        // naiSpec/naiThinking 两个键都还在,故这条继续按字符串锁住分支归属。
-        { backend: 'nai', model: 'nai-diffusion-4-full', want: 'NAI-CHECKLIST' },
-        { backend: 'nai', model: 'nai-diffusion-4-5-full', want: 'NAIV5-CHECKLIST' },
-        { backend: 'nai', model: 'nai-diffusion-5-full', want: 'NAIV5-CHECKLIST' },
+        { backend: 'nai', model: 'nai-diffusion-4-full', live: 'NAI 思维链(4 系)' },
+        { backend: 'nai', model: 'nai-diffusion-4-5-full', live: 'NAI 思维链' },
+        { backend: 'nai', model: 'nai-diffusion-5-full', live: 'NAI 思维链' },
       ] as const;
-      const all = ['COMFY-CHECKLIST', 'NAI-CHECKLIST', 'NAIV5-CHECKLIST'];
-      for (const { backend, model, want } of cases) {
+      const all = ['ComfyUI 思维链', 'NAI 思维链', 'NAI 思维链(4 系)'];
+      for (const { backend, model, live } of cases) {
         settings.defaultBackend = backend;
         settings.nai.model = model;
-        const messages = await buildAutoTagMessages(context(), 1, options, null);
-        const text = messages.map(m => m.content).join('\n');
-        for (const marker of all) {
-          expect([backend, model, marker, text.includes(marker)]).toEqual([
-            backend,
-            model,
-            marker,
-            marker === want,
-          ]);
+        const assembly = await buildAutoTagAssembly(context(), 1, options, null);
+        for (const name of all) {
+          const block = assembly.blocks.find(b => b.name === name);
+          // 三份思维链都在预设里,但只该活一份(其余 skipped)
+          expect([backend, model, name, block?.skipped ?? true]).toEqual([backend, model, name, name !== live]);
+          if (name === live) expect(block?.text.length).toBeGreaterThan(0);
         }
       }
     } finally {
@@ -587,9 +584,11 @@ describe('auto tag prompt', () => {
         settings.defaultBackend = 'nai';
         settings.nai.model = model;
         const messages = await buildAutoTagMessages(context(), 1, options, null);
-        const contract = messages.find(m => m.content.startsWith('你是严谨的剧情画面规划'))!.content;
-        const thinking = messages.find(m => m.content.startsWith('【输出前思考清单】'))!.content;
-        const spec = messages.find(m => m.content.startsWith('[NovelAI'))!.content;
+        // 0.4.0 起消息块默认「相邻同角色合并」,协议/思维链/规范并进同一条 system,
+        // 因此不能再靠 startsWith 定位单块 —— 用 includes 在同一份文本里逐段校验。
+        const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划'))!.content;
+        const thinking = messages.find(m => m.content.includes('【输出前思考清单】'))!.content;
+        const spec = messages.find(m => m.content.includes('[NovelAI'))!.content;
         const selection = thinking.split('E. 选段\n')[1].split('第二层｜')[0];
 
         expect(contract).toContain('优先表现正文中玩家主角和主要角色的表情、状态、行动及关系');
@@ -722,7 +721,8 @@ describe('auto tag prompt', () => {
     expect(messages.some(m => m.content.includes('照抄库中/刚建档的字段值'))).toBe(true);
     expect(messages.some(m => m.content.includes('只写一遍'))).toBe(true);
     expect(messages[messages.length - 2].content).toContain(library);
-    expect(messages[messages.length - 2].content).not.toContain('currently empty');
+    // 只在"角色库为空"的意义上判定:服装库那块永远带英文系统标记,不能用 currently empty 认
+    expect(messages[messages.length - 2].content).not.toContain('没有任何角色已建档');
   });
 
   it('forbids poses and scenes from entering the appearance profile', async () => {

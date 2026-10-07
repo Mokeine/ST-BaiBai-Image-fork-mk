@@ -6,6 +6,7 @@ import { injectMenuButton } from '@/menu';
 import { registerPublicInterface } from '@/public/register';
 import { bindCharTagSync } from '@/state/charTags';
 import { initGlobalCharTags } from '@/state/globalCharTags';
+import { initGlobalOutfitLibrary } from '@/state/outfitTags';
 import { hydrateSettings } from '@/state/settings';
 import { ui } from '@/state/ui';
 import { guardEditableArrowKeys } from '@/st/keyboard';
@@ -98,6 +99,8 @@ async function hydrateWhenReady(attempt = 0) {
       await hydrateSettings();
       // 全局库必须在 bindCharTagSync 之前初始化:首次重算就要把全局条目合进派生库
       initGlobalCharTags();
+      // 服装库的全局层同理:它跨聊天,只在启动时读一次(本聊天层随 CHAT_CHANGED 重读)
+      initGlobalOutfitLibrary();
       bindCharTagSync();
       ensureImageTagRegexRegistered();
       bindAutoTagging();

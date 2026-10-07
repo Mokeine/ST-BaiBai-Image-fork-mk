@@ -156,7 +156,7 @@ onBeforeUnmount(() => closeMenu());
     >
       <span class="bbi-select-current">
         <Icon v-if="current?.icon" :name="current.icon" :size="14" />
-        <span class="bbi-select-label">{{ current?.label ?? modelValue }}</span>
+        <span class="bbi-select-label" :title="current?.label ?? modelValue">{{ current?.label ?? modelValue }}</span>
       </span>
       <Icon name="chevron" class="bbi-select-caret" :class="{ 'is-open': open }" :size="12" />
     </button>
@@ -174,7 +174,7 @@ onBeforeUnmount(() => closeMenu());
           @click="pick(option)"
         >
           <Icon v-if="option.icon" :name="option.icon" :size="14" />
-          <span class="bbi-select-option-label">{{ option.label }}</span>
+          <span class="bbi-select-option-label" :title="option.label">{{ option.label }}</span>
           <Icon
             v-if="option.value === modelValue"
             name="check"

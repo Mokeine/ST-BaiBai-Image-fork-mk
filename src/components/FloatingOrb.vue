@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
+import { tagRunState } from '@/autoTag/runner';
 import { openPanel, ui } from '@/state/ui';
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 
@@ -23,6 +24,13 @@ const orbH = computed(() => ui.orbSize);
 const SNAP_ZONE = 56; // 松手时距左/右边缘 ≤ 此值即吸附贴边
 const CLICK_SLOP = 6; // 位移 < 此值视为点击而非拖动
 const POS_KEY = 'bbi.orb.pos.v1';
+
+/**
+ * 「运行中」= 正在发自动 tag 请求(与请求历史里显示「进行中」同一口径)。
+ * 出图不算 —— 那是另一条链路。
+ * 在 shadow root 内的 Vue 组件里,直接绑类即可,不需要 watch。
+ */
+const busy = computed(() => tagRunState.active > 0);
 
 type Dock = 'left' | 'right' | 'none';
 interface OrbPos {
@@ -178,7 +186,7 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
 <template>
   <div
     class="bbi-orb"
-    :class="[`shape-${ui.orbShape}`, { 'is-dragging': dragging, 'has-image': !!orbImage }]"
+    :class="[`shape-${ui.orbShape}`, { 'is-dragging': dragging, 'has-image': !!orbImage, 'is-loading': busy }]"
     :style="orbStyle"
     role="button"
     tabindex="0"
@@ -234,8 +242,48 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
 }
 
 /* 唤起(hover/聚焦/拖动)或停在中间(free) → 全显 */
-.bbi-orb:hover,
-.bbi-orb:focus-visible,
+/* —— 运行中:照抄智绘姬 FAB 的加载配方(st-chatu8/styles/fab.css 120–167 行)——
+   隐藏原图标,在中心画一个 0.8s 匀速旋转的圆环。环的参数与它逐字一致。 */
+.bbi-orb.is-loading .bbi-orb-icon,
+.bbi-orb.is-loading .bbi-orb-img {
+  visibility: hidden;
+}
+
+.bbi-orb.is-loading::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: bbi-orb-spin 0.8s linear infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+@keyframes bbi-orb-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 关动画时退化成静止亮点,仍能看出"进行中" */
+  .bbi-orb.is-loading::after {
+    animation: none;
+    border-color: rgba(255, 255, 255, 0.75);
+  }
+}
+
+.bbi-orb:hover,.bbi-orb:focus-visible,
 .bbi-orb.is-dragging {
   opacity: 1;
 }
@@ -248,8 +296,7 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
 }
 
 .bbi-orb-icon {
-  font-size: var(--orb-icon-size, 22px);
-  pointer-events: none;
+  font-size: var(--orb-icon-size, 22px);  pointer-events: none;
 }
 /* 书签:图标上移,避开底部燕尾缺口(圆/方无缺口,居中即可) */
 .bbi-orb.shape-bookmark .bbi-orb-icon {

@@ -42,6 +42,8 @@ src/
 │   ├── history.ts     # 请求历史(LLM 推理+生图)模块级内存 store,刻意不持久化
 │   ├── charTags.ts    # 角色固定外貌库:本聊天基线(chatMetadata)+ AI 楼层增量(消息 extra),
 │   │                  # 全局库经 setGlobalCharTagSource 注入合并;锁定名拦截 AI changes
+│   ├── outfitTags.ts  # 服装库:每个聊天一份的「服装名 → tag」字典(chatMetadata),不分字段、
+│   │                  # 不标归属;名字取自剧情变量里的装备条目名,穿脱不改库(见「服装库」一节)
 │   └── globalCharTags.ts # 全局角色库(extensionSettings,跨聊天/跨设备):仅手动维护的冻结模板,
 │                      # AI 永不可写;提升为全局/复制回本聊天两条迁移路径
 ├── api/
@@ -49,7 +51,11 @@ src/
 ├── autoTag/           # ★ 链路 A:自动生 tag(独立 LLM 请求 → 协议校验 → 注入正文)
 │   ├── runner.ts      # 事件监听、去重、重试、编排(入口)
 │   ├── generationGate.ts # 生成门:把自动 tag 与真实生成配对(GENERATION_STARTED 武装 → 最终 RENDERED 消费)
-│   ├── prompt.ts      # 组装消息:破限/角色/人设/世界书/规范/协议/思维链/预填充
+│   ├── prompt.ts      # 装配入口:求值变量 → 按预设渲染消息块 → 合并成 messages
+│   ├── promptVars.ts  # 提示词变量表(唯一来源:名字/说明/是否参与「整块跳过」判定)
+│   ├── promptRender.ts # 模板插值、空块跳过、相邻同角色合并、System→User 降级
+│   ├── promptPreset.ts # 预设 CRUD 纯逻辑 + 智绘姬上下文预设的读取 + 导出负载
+│   ├── promptPreview.ts # 设置页「预览」:用当前聊天走一遍真实装配(纯本地,不发请求)
 │   ├── protocol.ts    # 段尾位置 ID、JSON 严格解析校验、tag 注入格式
 │   ├── clean.ts       # 历史/目标正文清洗(共享排除标签;历史保留 bbi_image)
 │   ├── context.ts     # 世界书激活(条目级渲染:展宏+EJS)、角色卡、user 人设
@@ -106,6 +112,7 @@ src/
 │   ├── backend/index.vue      # 「渠道」页:页签(webui 已隐藏)+ 各后端面板
 │   │   └── panels/            # ComfyUIPanel / NaiPanel / WebUIPanel(隐藏,代码保留)/ NaiArtistManager
 │   ├── characters/index.vue   # 「角色管理」页:全局/本聊天两区卡片式外貌库 CRUD + 历史回滚
+│   ├── outfits/index.vue      # 「服装管理」页:服装库 CRUD(每聊天一份;名字=变量里的装备条目名)
 │   ├── gallery/index.vue      # 「图库」页:按角色名分组浏览 user/images/柏宝绘_<角色名>/(放大+看提示词+另存;多选删除**只删文件不碰聊天记录**,分组体积逐张 HEAD 量但 ⚠ 已暂时禁用)
 │   ├── history/index.vue      # 「请求历史」页:调试辅助(LLM 提示词/响应/生图元信息)
 │   └── settings/index.vue     # 「设置」页:渠道管理/自动 tag/提示词编辑/界面偏好(最大页)
@@ -113,6 +120,10 @@ src/
 │                     # (BbiCombo = 可输入可过滤下拉,与副 API 模型框同交互,菜单 Teleport 防裁剪)
 ├── styles/           # base.css(全局基础样式)、theme.css(主题变量,data-theme 切换)
 ├── bytes.ts          # 字节数 → 人读体积(1024 进制、单位写 KB/MB 与资源管理器对齐;非有限值返回空串)
+├── stopAll.ts        # ★ 「停止当前请求」收口点(历史页那个独立按钮):中止在途 tag 请求 +
+│                     # 在途生图 + 丢掉待办自动出图标记 + 清重写展示态;并给按钮提供"有在途工作吗"
+├── tokens.ts         # token 粗估(提示词块列表/预览/请求历史列表共用同一个口径);
+│                     # 中日韩 1 字 1 token、其余 4 字符 1 token,UI 一律写 ≈N(见 roughTokenLabel)
 ├── pool.ts           # 限并发 map(mapLimit,返回顺序=输入顺序);图库量体积/批量删图用
 ├── menu.ts           # 魔杖菜单入口注入(轮询等懒加载)
 ├── topbar.ts         # ST 顶栏快速打开按钮(受 ui.showTopBar 开关控制)
@@ -150,6 +161,8 @@ src/
 | `extensionSettings['baibai_api_channels']` | state/settings.ts | 跨「柏宝」插件共享的副 API 渠道(revision + 广播事件同步) |
 | `extensionSettings.regex` | st/imageTagRegex.ts | 托管两条正则(固定 id,幂等注册/覆盖) |
 | `chatMetadata['baibai_image_char_tags']` | state/charTags.ts | 角色库**本聊天手动基线**;AI 自动变化存各消息 extra `bbiCharChanges` |
+| `chatMetadata['baibai_image_outfit_tags']` | state/outfitTags.ts | **服装库·本聊天层**(含状态):`{version,entries:[{name,tag,state}]}`;也认手写的 `{名:tag}` 纯字典 |
+| `extensionSettings['baibai_image_outfit_global']` | state/outfitTags.ts | **服装库·全局层**(跨聊天):只有 `{name,tag}`,**不存状态**(剧情状态不该跨故事) |
 | `extensionSettings['baibai_image_char_global']` | state/globalCharTags.ts | **全局角色库**(跨聊天,revision + 广播事件);仅手动维护,AI changes 按锁定名丢弃 |
 | ST 事件 | 各 bind 处 | `CHARACTER_MESSAGE_RENDERED / USER_MESSAGE_RENDERED / MESSAGE_UPDATED / MESSAGE_SWIPED / MESSAGE_DELETED / CHAT_CHANGED` |
 | `generateRaw` | api/client.ts | 跟随主 API 的一次性补全(ST 稳定 API) |
@@ -197,7 +210,8 @@ runForFloor(floor, opts)
   4. 装配上下文:
      - bookMemory.readBookMemory  → 柏宝书角色参考块(可 null)
      - charAnchors.resolveCharAnchors → 库文本(纯本地渲染,无请求;空库返回 text=null)
-     - prompt.buildAutoTagMessages → 消息数组(见下)
+     - prompt.buildAutoTagAssembly → 逐块明细 + 消息数组(见下);
+       buildAutoTagMessages 是它的发送用包装(一条都发不出去时直接抛错)
   5. 请求:getTagGenChannel() 有指派渠道 → requestCompletion(服务端代理);
      否则 requestViaMainApi(generateRaw)。**每楼只此一次请求** —— 建档与选图同属一次
      推理:先在 changes 里确立新角色外貌,再在同一次输出的 tag 里 @引用它并围绕它补
@@ -229,20 +243,57 @@ runForFloor(floor, opts)
      成功才 recomputeCharTags;失败撤销标记;仅 changes 无图片也走写回。
 ```
 
-消息顺序(prompt.ts 固定):破限 system → 角色卡 system → persona system → 世界书 system →
-后端规范 system(ComfyUI/NAI 内置 spec,`{{nl}}` 宏按「生成自然语言」开关展开)→ 固定协议
-(身份定义 + 输出契约:一个 `<thinking>` 块和一个 JSON 对象,JSON 含 images + changes)→ 思维链 system → user(角色参考 + 角色库 + 清洗后的最近 N 个 AI 故事楼及其间 user 楼 + 带段尾位置 ID 的目标正文)
-→ assistant 预填充(`<thinking>`,渠道关闭 prefill 时由 client 丢弃)。
+**消息组装 = 消息块(0.4.0 起)**:默认预设的顺序是破限 system → 角色卡 system → persona system →
+世界书 system → 后端规范 system(ComfyUI/NAI 内置 spec,`{{nl}}` 宏按「生成自然语言」开关展开)→
+固定协议 system(身份定义 + 输出契约)→ 思维链 system → user(角色参考 + 角色库 + 清洗后的最近 N
+个 AI 故事楼及其间 user 楼 + 带段尾位置 ID 的目标正文)→ assistant(内容为 `<thinking>`,出厂默认排在
+最后且默认开启)。
 
-全部可编辑提示词(破限/规范/思维链/预填充)在 `state/settings.ts` 有内置默认常量
-(`DEFAULT_*_PROMPT`/`DEFAULT_*_SPEC`),留空回落默认 —— 改默认提示词内容先看这里。
+这条顺序**不再是代码**:设置页「自定义提示词」里的每个块都能改名、换角色(system/user/
+assistant)、调顺序、单块停用,整份预设可导出/导入。谁在第几条、以什么身份发出去,由块决定。
 
-⚠ **设置页只暴露两对规范/思维链:ComfyUI 与 NAI**,后者存在 `naiV5Spec` / `naiV5Thinking`
-(键名带 V5 是历史命名,内容对 4.5 同样适用,面板标签已改成不提代数的「NAI 规范/思维链」)。
-另有 `naiSpec` / `naiThinking` 是 4.5 以下的单串 tag 版本,随旧模型下线(见 §6 `NAI_MODELS`)
-**已无 UI 入口**:可选模型只剩 4.5/V5 → `naiCharPromptsOn` 恒真 → 那两份永远走不到。
-键与常量都刻意保留(不动存量 settings、不动旧模型标识的协议分支与回归锁),
-但**改 NAI 规范/思维链一律改 `DEFAULT_NAI_V5_*` 那一对**,别去改看着名字更正的那份。
+- **变量**(表在 `autoTag/promptVars.ts`,渲染在 `promptRender.ts`):`{{char_card}}` `{{persona}}`
+  `{{world_info}}` `{{book_memory}}` `{{char_library}}` `{{outfit_library}}` `{{chat_context}}` `{{target_text}}`
+  `{{target_role}}` `{{task_note}}` 是内容类;`{{output_shape}}` `{{image_count_rule}}`
+  `{{content_rule}}` `{{negative_rule}}` `{{character_rule}}` 是协议类;`{{nl}}` 是片段宏。
+  取不到的变量渲染为空串;**块引用的内容变量全部没值 → 整块不发**(旧版「抓不到角色卡就不发
+  那条」),片段宏不参与这个判定,否则关掉自然语言会把整份规范一起吞掉。
+- **酒馆宏会被展开**(0.5.x 新增):块文本先过插件变量,再把结果交给 `getContext().substituteParams`
+  (`autoTag/prompt.ts` 组装时传入、`promptRender.ts` 逐块调用)。顺序不能反 —— `{{char_card}}`
+  这类插件变量酒馆不认识,先给它只会被原样留下或吞掉。于是 `{{roll 1999999}}`/`{{char}}`/`{{time}}`
+  这些酒馆宏在**副 API 渠道**下也生效(跟随主 API 时酒馆自己还会再展一遍,那时已是普通文本)。
+  展宏在"空块判定"之前:一个只剩 `{{roll}}` 的块展宏后就不空了。
+  预览会把"每次取值可能不同"的宏(`{{roll}}`/`{{random}}`/`{{pick}}`)单独点出来,说明看到的是**这一次**的值。
+- **花括号残留会被点名**:展宏之后仍留在正文里的 `{{...}}` 会原样发给模型,预览列出来
+  (含拼错的插件变量、没展开的酒馆宏)。扫描的是**展宏后的正文**,所以不会把"本来就会被展宏的写法"误报。
+- **合并**:默认 `mergeAdjacent` 开(相邻同角色块并成一条,空行分隔),默认预设因此与旧版
+  发出去的消息同构;`mergeSystemUser` 另可把所有 system 降级为 user。两者都是全局开关。
+- **预填充块已降级为普通块**(0.5.x 起):曾经它带 `builtin: 'prefill'`,位置强制最后、不可删、
+  开关随渠道的「发送预填充」走 —— 这套**两处联动已整体删除**(渠道设置里的「发送预填充」复选框
+  也一并删掉)。现在它就是一条普通消息:开关看自己存的值、角色可改、位置可拖、可以删。
+  - 迁移:存量数据里带 `builtin: 'prefill'`(或 0.4.x 的固定 id `blk_prefill`)的块在归一化时摘掉标记,
+    并把 `enabled` 落定为**迁移当下的实际生效状态**(老渠道 `prefill === false` → 落成关),
+    免得升级瞬间那段 `<thinking>` 突然开始发或突然不发。
+  - ⚠ 别再引入"发送侧按末尾 assistant 丢一条"这类规则:它与块级判定重复且会连坐 ——
+    曾经把预填充块**前面那条用户自己的 assistant 块**(实测 9601 字的破限块)整块丢掉。
+
+- **`showMoveButtons`**(全局,默认关):控制块行上「上移/下移」两个按钮是否显示。
+  关掉不是砍能力 —— 桌面拖拽始终可用;触屏上 HTML5 拖放不触发,所以手机端要排序得打开它。
+  拖拽是自绘指针实现(不用 HTML5 DnD:`setData('text/plain', index)` 会让浏览器把这一格当成
+  可拖动的文字,拖到页面空白处会触发"拖文字去搜索";且拖影不跟手、触屏不触发)。
+- **规范/思维链按迁移当下的后端与模型只启用匹配的那一对**,之后由用户在块上开关 ——
+  **切后端不会自动换规范**(块是预设的一部分)。`naiSpec` / `naiThinking` 也有对应块,
+  只为不丢存量自定义值与回归锁而存在;可选模型只剩 4.5/V5,那两块默认停用。
+- **6 个旧字段**(`autoTag.prompts`)是 0.4.0 之前的可编辑入口,现在是**纯存档**:界面不提供入口、
+  原值留在设置里(退回旧版本仍生效),但**不再流进默认预设**。默认预设一律取仓库内置提示词 ——
+  见下。
+
+块文本的内置默认全在 `state/settings.ts`(`DEFAULT_*` 常量),默认预设由 `defaultPromptPreset(backend, naiModel)`
+物化,**只读这些常量、不读用户的旧字段**:默认预设要当"出厂基准"用,「恢复默认」必须给出真正的
+仓库版本,否则用户拿到的是一份"带着自己旧改动"的伪默认。—— **改默认提示词内容先看这里**。
+「固定输出协议」是唯一带 `builtin: 'contract'` 的块(编辑弹窗里有「恢复内置默认」):
+它的动态段落全部走变量,所以编辑模板不会让协议与当前参数(图片数量/自然语言/负面词)脱节。
+⚠ 删掉 `{{character_rule}}` 或整块停用 = 不再自动建档(库不会被写坏,只是不再新增档案)。
 
 ## 6. 链路 B:楼层卡片与出图(floor/ + backends/)
 
@@ -704,6 +755,35 @@ genState 同构(chatId|messageId|swipeId|seq),重建后按 key 认领。手动�
   6 路——ST 单进程,压太狠会卡住用户自己的聊天)且不阻塞首屏;量不到的**不计入**而非当 0
   累加,未量全的文案带「≥」;返回三态(`exists:true` / `exists:false` / `null`=分不清),
   `null` 让网络抖动不会被当成删除。
+- **outfitTags(服装库:名字 → 外观 + 状态,两层)**:
+  - 定位与角色库**互补而不重叠**:角色库回答"人长什么样"(按角色名,分字段,有变化史);
+    服装库回答"这件东西长什么样"(按服装名,只有**外观**与**状态**两项)。
+  - **名字即主键,来源是剧情变量**:用户正文里 `<status_current_variables>` 的
+    `主角:` → `装备:` 下 `位置: 已穿戴` 的子键名就是服装名(未装备的与 `背包:` 里的都不算)。
+    名字逐字相等是唯一的对档依据,所以任何一层都不允许出现同名两条。
+  - **库是字典,装备段是当前状态,两者解耦**:穿脱只改变量、不改库 —— 每件衣服只需建一次档。
+  - **两层,口径与角色库一致**:
+    - 本聊天层:`chatMetadata['baibai_image_outfit_tags']`,**有状态**;
+    - 全局层:`extensionSettings['baibai_image_outfit_global']`,跨聊天共用的**外观模板**,
+      **刻意不存状态** —— 破损/湿润是剧情状态,同一个故事里的礼服湿了,不代表另一个
+      故事里的同名礼服也湿;全局条目「复制到本聊天」之后才开始有状态(反之「提升为全局」
+      只带走外观)。
+    - 合并:同名时本聊天覆盖全局,全局那条不再单独出现(库文本里给未覆盖的全局条目加 `[global]`)。
+  - **状态会一起发给 AI**:注入文本里拼在同一行(`名字: 外观 ｜ 状态: 破损`),AI 照抄外观时
+    能看到当前状态。⚠ 状态是**可变字段**而不是永久档案:剧情恢复正常(烘干/修补/换下)后
+    必须清空,否则会粘在所有后续画面上 —— 规则写在提示词里,页面也能手工清。
+  - 注入:变量 `{{outfit_library}}`(空库给「当前为空」说明而不是空串,块照常发送 ——
+    与 `{{char_library}}` 同口径),默认预设里是「服装库」块(user 角色,排在角色外貌库之后)。
+  - **AI 自动建档(第二步,已实现)**:AI 在最终 JSON 里加 `outfits` 数组报告
+    `{"name","tag","state"}`。`tag`/`state` **缺省 = 这一项不改动,空串 = 清空**
+    (恢复正常时正是这么报的)—— 这个区分是硬要求,把缺省补成空串会变成"每次生成都抹掉
+    用户手填的状态"。落库在 `runner.ts` 里紧跟"正文 CAS 成功"之后(`applyOutfitReports`),
+    失败分支一律不写;与现状完全相同的报告跳过,不写盘。
+  - **这个能力由预设启用,不需要新设置项**:预设里有**启用中**的块引用了 `{{outfit_library}}`
+    → `output_shape` 里才带 `outfits`、`{{outfit_rule}}` 才展开成维护规则;否则形状不变、
+    规则只留一句"不要输出 outfits"。不用这个功能的人一个 token 都不多付。
+    ⚠ 协议块是用户存的模板:`{{outfit_rule}}` 这行要生效,那份块必须点一次
+    「恢复内置默认」(只补这一行,不改其他内容)。
 - **charTags(三层真源:全局库 + 本聊天手动基线 + AI 楼层增量)**:
   - **全局库**:存 `extensionSettings['baibai_image_char_global']`(globalCharTags.ts,
     协议同共享渠道:revision + 指纹 + 广播事件),跨聊天/跨设备。定位是**冻结模板**:
@@ -854,13 +934,18 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | 出图链路中段(闸门 / 后端分派 / 就绪判据) | src/generate.ts(卡片与公开接口共用;**绕过它就绕过了 NAI 闸门**) |
 | 设置项(新增字段/默认值/迁移) | src/state/settings.ts(类型 + defaults + normalize 三处) |
 | 设置窗口 UI | src/pages/settings/index.vue |
-| 提示词内置默认(破限/规范/思维链/预填充) | src/state/settings.ts 的 `DEFAULT_*` 常量(NAI 那对是 `DEFAULT_NAI_V5_*`) |
+| 提示词内置默认(各块文本) | src/state/settings.ts 的 `DEFAULT_*` 常量(NAI 那对是 `DEFAULT_NAI_V5_*`);默认预设由 `defaultPromptPreset()` 物化 |
+| 消息块预设(数据模型 / 迁移 / 默认值) | src/state/settings.ts(`AutoTagPrompt*` 类型 + `normalizePromptConfig`) |
+| 提示词变量表 / 渲染 / 合并 | src/autoTag/promptVars.ts + src/autoTag/promptRender.ts |
+| 预设导入导出 / 智绘姬上下文预设兼容 | src/autoTag/promptPreset.ts |
+| 消息块 UI / 编辑弹窗 / 预览 | src/pages/settings/PromptPresetSection.vue + PromptBlockEditor.vue + PromptPreviewDialog.vue |
 | 自动 tag 触发条件 / 去重 / 重试 | src/autoTag/runner.ts + generationGate.ts(生成门配对) |
-| 发给 LLM 的消息组装(顺序/内容) | src/autoTag/prompt.ts(NAI 一律走 DEFAULT_NAI_V5_SPEC:Base+Character 双提示) |
+| 发给 LLM 的消息组装(顺序/内容) | src/autoTag/prompt.ts 求值 + **用户在设置页排的消息块**(顺序不再固定) |
 | LLM 输出协议(JSON 形状/位置 ID/tag 格式) | src/autoTag/protocol.ts |
 | 世界书/角色卡/persona 装配 | src/autoTag/context.ts |
 | 柏宝书状态读取 | src/autoTag/bookMemory.ts |
 | 角色库 v3(基线+楼层增量/changes ops/@占位符兜底/历史回滚) | src/autoTag/charAnchors.ts + src/state/charTags.ts + src/autoTag/runner.ts |
+| 服装库(名字→tag 字典,每聊天一份) | src/state/outfitTags.ts + src/pages/outfits/index.vue + 变量 `{{outfit_library}}` |
 | Vibe 分组 / 搜索 / 启用集合判定 | src/backends/vibeGroups.ts(纯逻辑)+ NaiPanel.vue(交互) |
 | 副 API 请求(代理/SSE/超时/测试) | src/api/client.ts |
 | 思考强度(渠道弹窗 + custom 源请求体) | src/state/settings.ts 的 `ApiChannel.reasoningEffort` + api/client.ts 的 `buildRequestBody`(UI 在 settings/index.vue) |
@@ -886,6 +971,9 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | 写 tag 后自动出图的握手 / 判定 | src/floor/autoGenerate.ts 的 `shouldAutoGenerate`(纯函数,Card 无单测) |
 | 卡片折叠(默认折叠 / 手动折叠态) | src/floor/collapseState.ts + Card.vue(默认值 = settings.ui.autoCollapseImages) |
 | 卡片「生成中」状态 / 取消 / 并发 | src/floor/genState.ts(运行态)+ genQueue.ts(NAI 闸门与节奏等待) |
+| 「停止当前请求」按钮(历史页) | src/stopAll.ts(收口:runner 的 `stopAllTagRuns` + genState 的 `clearAllGen` + autoGenerate 的 `clearAutoGenerateFlags` + tagPlanState 的 `clearAllTagPlans`;启用判据 `hasRunningWork`)+ pages/history/index.vue |
+| 提示词块里的酒馆宏({{roll}}/{{char}}/{{time}} 等) | src/autoTag/prompt.ts(取 `ctx.substituteParams` 传进渲染)+ src/autoTag/promptRender.ts 的 `expandMacros`(插件变量之后逐块展宏) |
+| 「这一块占多少 token」(块列表 / 预览 / 请求历史分段共用) | src/tokens.ts(`roughTokens` 口径 + `roughTokenLabel` 的 `≈N` 写法 + `ROUGH_TOKEN_HINT` 的 hover 说明) |
 | NAI 429 / 重试 / 退避 / 全局冷却 | src/backends/naiRateLimit.ts(策略与节奏状态唯一口径;genQueue 取槽后等待,nai.ts 包住请求) |
 | 图片放大 / 长按保存 / 保存删除按钮 | src/floor/Lightbox.vue + lightbox.ts(另存走 download.ts) |
 | 卡片版面 / 按钮尺寸基线 / 卡片主题 | src/floor/card.css + cardStyles.ts(令牌来自 styles/theme.css) |

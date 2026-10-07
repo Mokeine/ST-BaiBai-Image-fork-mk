@@ -31,8 +31,17 @@ const props = withDefaults(
     placeholder?: string;
     /** 关闭拼写检查(tag/JSON 场景默认关;纯中文描述可开) */
     spellcheck?: boolean;
+    /**
+     * 填满父容器剩余高度并内部滚动(弹窗里的长文本编辑用)。
+     * 设了它就不再按行数自动长高:高度交给 flex —— 空间够就撑高、不够就缩到可用高度并内部滚动。
+     *
+     * 起因:弹窗是 flex 列 + 高度封顶(max-height),普通模式下按内容算好的像素高会被 flex 压小,
+     * 而 overflowY 已按"压小之前"的高度定成了 hidden —— 溢出部分被裁掉且**滚不到**
+     * (实测矮窗口下丢 182px 内容)。fill 模式把这件事交给 flex,不再自相矛盾。
+     */
+    fill?: boolean;
   }>(),
-  { rows: 1, maxRows: 12, mono: false, placeholder: '', spellcheck: false },
+  { rows: 1, maxRows: 12, mono: false, placeholder: '', spellcheck: false, fill: false },
 );
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>();
@@ -61,6 +70,8 @@ function onCompositionEnd(event: CompositionEvent) {
 function measure(): void {
   const node = el.value;
   if (!node) return;
+  // fill 模式:高度交给 flex,这里什么都不写(写了内联 height/overflow 就会和 flex 抢)
+  if (props.fill) return;
   node.style.height = 'auto';
   // scrollHeight 只含内容+上下 padding,box-sizing:border-box 时须补边框才是总占用高度
   const content = node.scrollHeight;
@@ -131,7 +142,7 @@ defineOptions({ inheritAttrs: false });
   <textarea
     ref="el"
     class="bbi-textarea"
-    :class="{ 'is-mono': mono }"
+    :class="{ 'is-mono': mono, 'is-fill': fill }"
     v-bind="attrs"
     :value="modelValue"
     :placeholder="placeholder"
@@ -158,6 +169,18 @@ defineOptions({ inheritAttrs: false });
   display: block;
   resize: none;
   overflow-y: hidden;
+  /* 作为 flex 子项时不许被压小:被压小之后内联的 overflow:hidden 会把下半截裁掉,
+     用户既看不见也滚不到(实测矮窗口下丢 182px)。要内部滚动请用 fill 模式。 */
+  flex-shrink: 0;
+}
+/* fill 模式:填满剩余高度 + 内部滚动。min-height:0 是必须的 ——
+   没有它,flex 项不会缩到内容高度以下,内部滚动永远不触发。 */
+.bbi-textarea.is-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* scroll 而不是 auto:常驻滑槽,任何长度下都有一条可拖的条(内容不够长时只是空槽)。
+     注意:非 fill 模式别指望这条 —— measure() 会写内联 overflow,内联优先于样式表。 */
+  overflow-y: scroll;
 }
 .bbi-textarea.is-mono {
   font-family: var(--bbi-font-mono);

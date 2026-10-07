@@ -25,6 +25,7 @@ import {
   type CharTagAutoOp,
   type CharTagField,
 } from '@/state/charTags';
+import { applyOutfitReports } from '@/state/outfitTags';
 import { injectImageTags, parseImagePlan, type ImagePlan } from '@/autoTag/protocol';
 import {
   clearAutoGenerateForFloor,
@@ -41,9 +42,16 @@ import {
   stripImageTags,
 } from '@/st/imageTagRegex';
 import { getTagGenChannel, isCurrentChatExcluded, settings } from '@/state/settings';
+import { reactive } from 'vue';
 
 const processed = new Set<string>();
 const running = new Map<string, AbortController>();
+
+/**
+ * 响应式「在途 tag 请求数」:历史页的「停止」按钮据此启用/置灰。
+ * 不让 UI 直接读 running —— controller 不适合进 reactive,而 UI 只需要一个数字。
+ */
+export const tagRunState = reactive({ active: 0 });
 let bound = false;
 const scheduled = new Set<ReturnType<typeof setTimeout>>();
 const DIAGNOSTIC_PREFIX = '[BBI][AutoTagDebug]';
@@ -294,6 +302,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
   running.get(runKey)?.abort();
   const controller = new AbortController();
   running.set(runKey, controller);
+  // 响应式在途计数:历史页的「停止」按钮据此启用/置灰(不暴露 controller 本身)
+  tagRunState.active = running.size;
 
   try {
     const memory = readBookMemory(floor, context.chat[floor]?.mes ?? '', context.name1);
@@ -534,6 +544,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           },
     );
     if (result === 'saved') {
+      // 服装库是聊天级字典:落库紧跟在"正文 CAS 成功"之后,失败分支一律不写
+      if (plan.outfits.length) {
+        const applied = applyOutfitReports(plan.outfits);
+        if (applied) console.info(`[柏宝绘] 服装库更新 ${applied} 条`);
+      }
       if (slot) {
         toastr.success(`已重写第 ${slot.seq + 1} 张的提示词，正在按新提示词出图`, '柏宝绘');
         return;
@@ -574,7 +589,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     toastr.error(message, '柏宝绘自动 tag 失败');
   } finally {
     if (running.get(runKey) === controller) running.delete(runKey);
+    tagRunState.active = running.size;
   }
+}
+
+/**
+ * 「停止」入口:中止全部在途 tag 请求、清掉排队待跑的、并清生成闸门。
+ *
+ * 中止后 runForFloor 会在每处 `controller.signal.aborted` 检查点直接收手 —— 不重试、
+ * 不写回正文、也不挂"自动出图"标记,所以"不再进行后续的自动尝试"是天然成立的。
+ * 切聊天时也走这里(见 bindAutoTagging)。
+ */
+export function stopAllTagRuns(): void {
+  cancelAll();
 }
 
 function cancelAll(): void {
@@ -584,6 +611,7 @@ function cancelAll(): void {
   scheduled.clear();
   for (const controller of running.values()) controller.abort();
   running.clear();
+  tagRunState.active = 0;
 }
 
 function scheduleForGeneratedFloor(floor: number, chatId: string): void {

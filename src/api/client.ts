@@ -250,13 +250,12 @@ async function requestCompletionAtUrl(
   if (!channel.url || !channel.model) throw new ApiError('副 API 渠道未配置完整(缺 url 或 model)');
 
   const stream = channel.stream ?? false;
-  // 预填充开关(默认开):关闭时丢掉末尾那条 assistant 预填充消息。
-  // 对不支持预填充(不续写)的端点形同浪费、个别端点还要求「最后一条须为 user」。
-  const outMessages =
-    channel.prefill === false && messages[messages.length - 1]?.role === 'assistant'
-      ? messages.slice(0, -1)
-      : messages;
-  const body = buildRequestBody(channel, outMessages, reverseProxy, stream);
+  // 这里**不**按「末尾是不是 assistant」丢消息。
+  // 渠道的「发送预填充」绑定的是预设里标记 builtin:'prefill' 的那个块,装配阶段
+  // (autoTag/promptRender.ts 的 renderPresetBlocks)已按同一个开关整块跳过它。
+  // 早先这层再丢一次"末尾 assistant",于是把预填充块**前面那条用户自己的 assistant 块**
+  // 连坐丢掉(实测把 9601 字的破限块整块丢了,而用户只是关掉了预填充)。
+  const body = buildRequestBody(channel, messages, reverseProxy, stream);
 
   const timeoutSec = validTimeoutSec(channel.timeoutSec);
 
@@ -267,7 +266,7 @@ async function requestCompletionAtUrl(
       channelName: channel.name || channel.model || '(未命名渠道)',
       model: channel.model,
       stream,
-      messages: outMessages,
+      messages: [...messages],
     }),
   );
 
@@ -319,7 +318,7 @@ async function requestCompletionAtUrl(
         }),
       );
       // 没有真值(流式)才估算。估算是异步的,不 await——不能让它拖慢主流程。
-      if (!hasReal) void estimateTokens(historyId, outMessages, result.content);
+      if (!hasReal) void estimateTokens(historyId, messages, result.content);
     }
     return result.content;
   } catch (e) {

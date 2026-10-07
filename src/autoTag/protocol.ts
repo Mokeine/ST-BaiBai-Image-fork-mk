@@ -33,6 +33,21 @@ export interface ImagePlan {
   images: ImageInsertion[];
   /** AI 报告的角色库变更(建档/字段更新);调用方负责落库。 */
   changes: CharChange[];
+  /** AI 报告的服装库变更(外观/状态);调用方负责落库。未启用服装库时恒为空数组。 */
+  outfits: OutfitReport[];
+}
+
+/**
+ * AI 输出的单条服装报告(宽松形状)。
+ *
+ * **键存在与否有语义**:`tag`/`state` 缺省 = 这一项不改动,给了空串 = 清空
+ * (状态恢复正常时正是这么报的)。所以这里不能把"缺省"补成空串 —— 那会变成
+ * "每次生成都把用户手填的状态抹掉"。
+ */
+export interface OutfitReport {
+  name: string;
+  tag?: string;
+  state?: string;
 }
 
 /** AI 输出的单条角色变更(宽松形状;解析后字段全部合法才保留)。 */
@@ -164,6 +179,41 @@ function sanitizePosition(value: unknown, index: number): string {
   return position;
 }
 
+/** 注入文本里不允许出现的子标签字面量(口径同 st/imageTagRegex.ts 与 charTags 的清洗)。 */
+const FORBIDDEN_SUB_TAG = /<\/?(?:bbi_image|tag|nl|size)\b/i;
+
+/**
+ * 服装报告一律宽容:坏条目直接丢弃,绝不连累 images —— 服装漏一条只是这件衣服下次
+ * 得重写,为它作废整次输出会连图一起没有。
+ *
+ * ⚠ 不能把缺省的 `tag`/`state` 补成空串:缺省 = 不改动,空串 = 清空,两者语义相反。
+ */
+export function parseOutfits(raw: unknown): OutfitReport[] {
+  if (!Array.isArray(raw)) return [];
+  const out: OutfitReport[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const entry = item as Record<string, unknown>;
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    if (!name || seen.has(name)) continue;
+    const report: OutfitReport = { name };
+    for (const key of ['tag', 'state'] as const) {
+      const value = entry[key];
+      // 键不存在或类型不对 → 视为"这项不改动"
+      if (typeof value !== 'string') continue;
+      const trimmed = value.trim();
+      // 子标签混进来会污染后续注入文本,宁可当没给
+      if (trimmed && FORBIDDEN_SUB_TAG.test(trimmed)) continue;
+      report[key] = trimmed;
+    }
+    if (report.tag === undefined && report.state === undefined) continue;
+    seen.add(name);
+    out.push(report);
+  }
+  return out;
+}
+
 /**
  * 解析并严格校验模型给出的“目标位置 ID + 提示词”列表。tag 必填;nl/negative 选填。
  * size 一律容忍:归一不出就当竖屏——为它抛错会白白吃掉 runner 的重试次数。
@@ -219,6 +269,7 @@ export function parseImagePlan(
   return {
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions),
+    outfits: parseOutfits(parsed.outfits),
   };
 }
 

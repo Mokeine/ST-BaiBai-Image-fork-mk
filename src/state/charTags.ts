@@ -1,3 +1,4 @@
+import { hydrateOutfitLibrary } from '@/state/outfitTags';
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
 
@@ -586,6 +587,8 @@ export function bindCharTagSync(): void {
   if (!context?.eventSource || !context.eventTypes?.CHAT_CHANGED) return;
   bound = true;
   context.eventSource.on(context.eventTypes.CHAT_CHANGED, hydrateCharTags);
+  // 服装库同样是"每个聊天一份",切聊天要跟着换(见 state/outfitTags.ts)
+  context.eventSource.on(context.eventTypes.CHAT_CHANGED, hydrateOutfitLibrary);
   const recomputeLater = () => setTimeout(recomputeCharTags, 0);
   if (context.eventTypes.MESSAGE_DELETED) {
     context.eventSource.on(context.eventTypes.MESSAGE_DELETED, recomputeLater);
@@ -594,4 +597,5 @@ export function bindCharTagSync(): void {
     context.eventSource.on(context.eventTypes.MESSAGE_SWIPED, recomputeLater);
   }
   hydrateCharTags();
+  hydrateOutfitLibrary();
 }
