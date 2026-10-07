@@ -124,8 +124,8 @@ describe('parseBaibaiPresets / parsePresetFile(柏宝绘自有格式)', () => {
       '我的预设',
     );
     // 智绘姬格式(没有 format 字段)
-    const chatu8 = { 金丹后期: { entries: [{ name: '阿撒托斯之梦', role: 'user', content: 'x', enabled: true }] } };
-    expect(parsePresetFile(chatu8).presets[0].name).toBe('金丹后期');
+    const chatu8 = { 示例预设: { entries: [{ name: '示例条目', role: 'user', content: 'x', enabled: true }] } };
+    expect(parsePresetFile(chatu8).presets[0].name).toBe('示例预设');
   });
 });
 

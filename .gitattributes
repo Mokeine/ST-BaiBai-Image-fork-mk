@@ -1,0 +1,16 @@
+# 统一按 LF 存取:仓库里始终是 LF,避免 Windows/macOS 之间来回翻搅换行
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# 构建产物与自动生成的数据文件:折叠文本 diff、标记为生成物
+# (dist 是插件运行所必需、必须提交;defaultPreset.ts 由脚本从预设导出,人工不直接编辑)
+dist/** -diff linguist-generated=true
+src/state/defaultPreset.ts -diff linguist-generated=true
+pnpm-lock.yaml -diff linguist-generated=true

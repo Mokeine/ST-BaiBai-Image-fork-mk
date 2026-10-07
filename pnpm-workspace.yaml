@@ -1,0 +1,12 @@
+# pnpm 11 用 allowBuilds,旧版(10)用 onlyBuiltDependencies —— 两个都留着,跨版本都稳。
+#
+# 为什么必须批准:vitest / vite 依赖 esbuild,而 esbuild 安装时要跑构建脚本落地平台二进制。
+# 不批准 → 干净环境(如 CI、任何新克隆)在 `pnpm install` 之后跑测试会直接起不来
+# (报 ERR_PNPM_IGNORED_BUILDS)。
+#
+# 只批准 esbuild:其它依赖不需要构建脚本,保持默认拦截更安全。
+allowBuilds:
+  esbuild: true
+
+onlyBuiltDependencies:
+  - esbuild

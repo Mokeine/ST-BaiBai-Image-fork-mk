@@ -31,6 +31,7 @@ import {
   type AutoTagPromptConfig,
   type PromptRole,
 } from '@/state/settings';
+import { DEFAULT_PRESET_BLOCKS } from '@/state/defaultPreset';
 import { modalHost } from '@/state/ui';
 import { ROUGH_TOKEN_HINT as TOKEN_HINT, roughTokenLabel as tokenLabel } from '@/tokens';
 import { computed, nextTick, ref } from 'vue';
@@ -582,7 +583,7 @@ async function openPreview(): Promise<void> {
               v-if="isDefaultPreset"
               class="bbi-preset-ops-item"
               type="button"
-              title="把默认预设的 17 个块恢复成内置默认"
+              :title="`把默认预设的 ${DEFAULT_PRESET_BLOCKS.length} 个块恢复成内置默认`"
               @click="restoreDefaultPreset"
             >
               <Icon name="refresh" /><span>恢复默认</span>

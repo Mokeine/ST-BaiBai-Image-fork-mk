@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    # 用 windows 跑:本项目在 Windows 上开发与构建,避免路径分隔符/换行差异造成误报
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # 跟随开发者本机的 pnpm 大版本(当前 v10):approve-builds 等语义与本地一致
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm run typecheck
+
+      - name: 单元测试
+        run: pnpm run test
+
+      # dist/ 必须跟着源码一起提交(插件运行时直接加载它)。
+      # 注意顺序:**先校验、后构建** —— 构建会重写 dist,把"忘了重新构建"这件事直接抹掉。
+      # 校验方式见 scripts/check-dist-sync.mjs 顶部的注释(为什么不逐字节比较产物)。
+      - name: dist 必须与源码同步
+        run: node scripts/check-dist-sync.mjs
+
+      - name: 构建仍然可用
+        run: pnpm run build
