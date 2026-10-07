@@ -1,24 +1,17 @@
 <script setup lang="ts">
 import BbiSelect from '@/components/BbiSelect.vue';
-import BbiTextarea from '@/components/BbiTextarea.vue';
 import Collapsible from '@/components/Collapsible.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
+import PromptPresetSection from '@/pages/settings/PromptPresetSection.vue';
 import { fetchModels, testChannel } from '@/api/client';
 import {
   BACKENDS,
-  DEFAULT_COMFY_SPEC,
-  DEFAULT_COMFY_THINKING,
-  DEFAULT_JAILBREAK_PROMPT,
-  DEFAULT_NAI_V5_SPEC,
-  DEFAULT_NAI_V5_THINKING,
-  DEFAULT_PREFILL_PROMPT,
   newChannel,
   sanitizeTagName,
   settings,
   type ApiChannel,
-  type AutoTagPrompts,
   type BackendId,
 } from '@/state/settings';
 import { getContext } from '@/st/context';
@@ -103,109 +96,6 @@ function normalizeAutoTagNumbers(changed?: 'minImages' | 'maxImages' | Event) {
   settings.autoTag.minImages = minImages;
   settings.autoTag.maxImages = maxImages;
   settings.autoTag.retryCount = Math.min(5, Math.max(0, Math.floor(Number(settings.autoTag.retryCount) || 0)));
-}
-
-/* —— 自定义提示词(UI 照搬柏宝书):列表只读展示,编辑在弹窗里进行。
-   空串 = 回落内置默认;是否已自定义按 trim 非空判定。 —— */
-interface TagPromptMeta {
-  key: keyof AutoTagPrompts;
-  label: string;
-  hint: string;
-  builtin: string;
-  macros: { token: string; desc: string }[];
-}
-
-// 规范与思维链按后端成对排列:两者必须配对使用(思维链槽位要填的字段,
-// 得在同后端规范里有判据和词表),列在一起是为了改一个时能看见另一个。
-// 不按当前后端过滤——过滤会让「现在用的是哪份」变成隐式状态,反而更难排查。
-//
-// ⚠ NAI 只列一对,存的是 naiV5Spec / naiV5Thinking(键名带 V5 是历史包袱,见 settings.ts)。
-// 4.5 以下那套单串 tag 的 naiSpec / naiThinking 已随模型列表收窄一起下线,不再列出:
-// 可选模型只剩 4.5/V5,那两份永远走不到,列出来只会让人以为还有第二种口径要维护。
-const TAG_PROMPT_METAS: TagPromptMeta[] = [
-  {
-    key: 'jailbreak',
-    label: '破限词',
-    hint: '作为置顶 system 附加在自动 tag 请求里，降低副 API 拒答率。留空则用内置默认（与柏宝书同款文本）。全后端通用。',
-    builtin: DEFAULT_JAILBREAK_PROMPT,
-    macros: [],
-  },
-  {
-    key: 'naiV5Spec',
-    label: 'NAI \u89c4\u8303',
-    hint: '\u9ed8\u8ba4\u540e\u7aef\u4e3a NAI \u65f6\u62fc\u8fdb\u81ea\u52a8 tag \u8bf7\u6c42\uff0c\u5b9a\u4e49 Base Prompt\u3001\u539f\u751f Character Prompts \u4e0e\u82f1\u6587\u81ea\u7136\u8bed\u8a00\uff08nl \u4e00\u5f8b\u5199\u82f1\u6587\uff09\u30024.5 \u4e0e V5 \u5171\u7528\u8fd9\u4e00\u4efd\uff1achar_captions \u672c\u5c31\u662f v4 \u65f6\u4ee3\u7684\u534f\u8bae\uff0c\u4e24\u4ee3\u5199\u6cd5\u53e3\u5f84\u76f8\u540c\u3002\u7559\u7a7a\u7528\u5185\u7f6e\u9ed8\u8ba4\u3002',
-    builtin: DEFAULT_NAI_V5_SPEC,
-    macros: [],
-  },
-  {
-    key: 'naiV5Thinking',
-    label: 'NAI 思维链',
-    hint: '默认后端为 NAI 时使用的输出前思考清单，作为 system 压在任务消息之后（解析时会自动剥掉思考块）。槽位块是「Base 块 + 每角色一块」，对应 characters[] 协议，与 ComfyUI 那份的单串形态不通用。与「NAI 规范」配套。留空用内置默认。',
-    builtin: DEFAULT_NAI_V5_THINKING,
-    macros: [],
-  },
-  {
-    key: 'comfySpec',
-    label: 'ComfyUI 规范',
-    hint: '默认后端为 ComfyUI 时拼进自动 tag 请求，约束 tag / nl 的书写规范。留空用内置默认。',
-    builtin: DEFAULT_COMFY_SPEC,
-    macros: [
-      {
-        token: '{{nl}}',
-        desc: '自然语言规范；ComfyUI 面板开启「生成自然语言」时展开，关闭时置空。不写此宏时，开启开关会自动追加到末尾。',
-      },
-    ],
-  },
-  {
-    key: 'comfyThinking',
-    label: 'ComfyUI 思维链',
-    hint: '默认后端为 ComfyUI 时使用的输出前思考清单，作为 system 压在任务消息之后（解析时会自动剥掉思考块）。与「ComfyUI 规范」配套。留空用内置默认。',
-    builtin: DEFAULT_COMFY_THINKING,
-    macros: [],
-  },
-  {
-    key: 'prefill',
-    label: '预填充',
-    hint: 'assistant 预填充，以 <thinking> 开头引导模型从思维链续写；随渠道「发送预填充」开关生效。留空用内置默认。全后端通用。',
-    builtin: DEFAULT_PREFILL_PROMPT,
-    macros: [],
-  },
-];
-
-// 正在编辑的提示词;draft 是草稿,点「完成」才写回 settings(取消则丢弃)。
-const editingTagPrompt = ref<TagPromptMeta | null>(null);
-const tagPromptDraft = ref('');
-const tagPromptArea = ref<InstanceType<typeof BbiTextarea> | null>(null);
-
-// 该条是否已自定义(非空即视为已覆盖内置)
-function isTagPromptCustom(key: keyof AutoTagPrompts): boolean {
-  return settings.autoTag.prompts[key].trim().length > 0;
-}
-
-function openTagPrompt(meta: TagPromptMeta) {
-  editingTagPrompt.value = meta;
-  // 已自定义→载入用户内容;未自定义→预填内置模板,方便直接在其上改
-  tagPromptDraft.value = settings.autoTag.prompts[meta.key].trim() || meta.builtin;
-}
-function closeTagPrompt() {
-  editingTagPrompt.value = null;
-  tagPromptDraft.value = '';
-}
-function saveTagPrompt() {
-  const meta = editingTagPrompt.value;
-  if (!meta) return;
-  // 草稿与内置完全一致→存空串(回落内置),避免把模板冗余存进设置、也便于显示「默认」
-  const v = tagPromptDraft.value.trim();
-  settings.autoTag.prompts[meta.key] = v === meta.builtin.trim() ? '' : tagPromptDraft.value;
-  closeTagPrompt();
-}
-// 「恢复默认」:把草稿重置回内置模板(保存后即回落内置)
-function resetTagPromptDraft() {
-  if (editingTagPrompt.value) tagPromptDraft.value = editingTagPrompt.value.builtin;
-}
-// 点宏标签 → 插入到文本框光标处(无焦点则追加到末尾);光标定位由组件内部处理
-function insertTagMacro(token: string) {
-  tagPromptArea.value?.insertAtCursor(token);
 }
 
 // 排除参数:内部存 string[],编辑时用逗号分隔的单行文本承载,读/写两向转换。
@@ -825,20 +715,8 @@ async function confirmUpdate() {
         <p v-else class="bbi-field-hint">暂无自定义标签。仅内置清洗(思维链、注释、物品旁注等)生效。</p>
       </Collapsible>
 
-      <!-- 自定义提示词(与柏宝书同款入口,独立成区) -->
-      <Collapsible title="自定义提示词" :open="false">
-        <ul class="bbi-prompt-list">
-          <li v-for="m in TAG_PROMPT_METAS" :key="m.key" class="bbi-prompt-item">
-            <button class="bbi-prompt-open" type="button" @click="openTagPrompt(m)">
-              <span class="bbi-prompt-name">{{ m.label }}</span>
-              <span class="bbi-prompt-state" :class="{ 'is-custom': isTagPromptCustom(m.key) }">
-                {{ isTagPromptCustom(m.key) ? '已自定义' : '默认' }}
-              </span>
-              <Icon name="edit" class="bbi-prompt-edit" />
-            </button>
-          </li>
-        </ul>
-      </Collapsible>
+      <!-- 自定义提示词:消息块列表 + 预设管理(独立成区,见 PromptPresetSection.vue) -->
+      <PromptPresetSection />
     </div>
 
     <!-- ===== 排除角色弹窗:搜索 + 勾选列表 ===== -->
@@ -1021,11 +899,6 @@ async function confirmUpdate() {
           <span class="bbi-modal-label">流式传输</span>
           <input v-model="editingChannel.stream" type="checkbox" class="bbi-checkbox" />
         </label>
-        <label class="bbi-switch-row">
-          <span class="bbi-modal-label">发送预填充</span>
-          <input v-model="editingChannel.prefill" type="checkbox" class="bbi-checkbox" />
-        </label>
-        <span class="bbi-field-hint">默认开。若副 API 报错信息里出现 prefill 字样,关掉它即可。</span>
         <label class="bbi-modal-field">
           <span class="bbi-modal-label">排除参数</span>
           <input
@@ -1065,57 +938,6 @@ async function confirmUpdate() {
         >
           确定删除渠道「{{ editingChannel.name || '未命名渠道' }}」吗?此操作不可撤销,已指派该渠道的任务会被清空。
         </ConfirmDialog>
-      </div>
-    </ModalMask>
-
-    <!-- ===== 自定义提示词编辑弹窗(UI 照搬柏宝书) ===== -->
-    <ModalMask :open="!!editingTagPrompt" @close="closeTagPrompt">
-      <div
-        v-if="editingTagPrompt"
-        class="bbi-modal bbi-modal-wide"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="`编辑${editingTagPrompt.label}`"
-      >
-        <header class="bbi-modal-head">
-          <span class="bbi-modal-title">编辑{{ editingTagPrompt.label }}</span>
-          <button class="bbi-icon-mini" type="button" title="关闭" @click="closeTagPrompt"><Icon name="close" /></button>
-        </header>
-
-        <p class="bbi-modal-label">{{ editingTagPrompt.hint }}</p>
-
-        <!-- 可用宏:点一下插入到光标处(仅 ComfyUI 规范有 {{nl}};无宏的条目不显示这一栏) -->
-        <div v-if="editingTagPrompt.macros.length" class="bbi-macro-bar">
-          <span class="bbi-macro-tip">点击插入宏:</span>
-          <button
-            v-for="mac in editingTagPrompt.macros"
-            :key="mac.token"
-            class="bbi-macro"
-            type="button"
-            :title="mac.desc"
-            @click="insertTagMacro(mac.token)"
-          >
-            {{ mac.token }}
-          </button>
-        </div>
-
-        <BbiTextarea
-          ref="tagPromptArea"
-          v-model="tagPromptDraft"
-          class="bbi-prompt-area"
-          :rows="12"
-          :max-rows="28"
-          mono
-        />
-
-        <footer class="bbi-modal-foot">
-          <button class="bbi-btn bbi-btn-danger" type="button" @click="resetTagPromptDraft">
-            <Icon name="refresh" /> 恢复默认
-          </button>
-          <span class="bbi-modal-foot-spacer"></span>
-          <button class="bbi-btn" type="button" @click="closeTagPrompt">取消</button>
-          <button class="bbi-btn bbi-btn-primary" type="button" @click="saveTagPrompt">完成</button>
-        </footer>
       </div>
     </ModalMask>
 
@@ -1467,92 +1289,6 @@ async function confirmUpdate() {
 /* 测试按钮文字:默认(PC)显完整版,短版藏起;窄屏在媒体查询里互换 */
 .bbi-btn-label-short {
   display: none;
-}
-
-/* —— 自定义提示词列表(UI 照搬柏宝书) —— */
-.bbi-prompt-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-/* 整行可点进弹窗编辑;布局沿用渠道列表的观感(描边、hover 显强调色) */
-.bbi-prompt-open {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--bbi-line);
-  border-radius: var(--bbi-radius);
-  background: var(--bbi-surface-2);
-  color: var(--bbi-ink);
-  font-family: var(--bbi-font-sans);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color var(--bbi-dur) var(--bbi-ease), background var(--bbi-dur) var(--bbi-ease);
-}
-.bbi-prompt-open:hover {
-  border-color: var(--bbi-accent);
-  background: var(--bbi-surface);
-}
-.bbi-prompt-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-/* 状态药丸(.bbi-prompt-state / .is-custom)已提到 base.css 全局:渠道页也用它 */
-.bbi-prompt-edit {
-  flex: 0 0 auto;
-  font-size: 16px;
-  color: var(--bbi-ink-muted);
-}
-.bbi-prompt-open:hover .bbi-prompt-edit {
-  color: var(--bbi-accent);
-}
-
-/* —— 提示词弹窗:更宽 + 大文本框 —— */
-.bbi-modal-wide {
-  max-width: 680px;
-}
-/* 宏标签条:可横向裹行,每个宏点击插入 */
-.bbi-macro-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.bbi-macro-tip {
-  font-size: 12px;
-  color: var(--bbi-ink-muted);
-  margin-right: 2px;
-}
-.bbi-macro {
-  padding: 3px 9px;
-  border: 1px solid var(--bbi-line-strong);
-  border-radius: var(--bbi-radius-pill);
-  background: var(--bbi-surface-2);
-  color: var(--bbi-ink-soft);
-  font-family: var(--bbi-font-mono);
-  font-size: 12px;
-  cursor: pointer;
-  transition: color var(--bbi-dur) var(--bbi-ease), border-color var(--bbi-dur) var(--bbi-ease),
-    background var(--bbi-dur) var(--bbi-ease);
-}
-.bbi-macro:hover {
-  color: var(--bbi-accent);
-  border-color: var(--bbi-accent);
-  background: var(--bbi-accent-soft);
-}
-.bbi-prompt-area {
-  line-height: 1.6;
-  font-size: 12.5px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  tab-size: 2;
 }
 
 /* ============ 排除名单(chips + 弹窗列表):与柏宝书同款交互,类名换 bbi 前缀 ============ */
