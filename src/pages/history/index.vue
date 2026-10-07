@@ -7,11 +7,12 @@ import ModalMask from '@/components/ModalMask.vue';
 import {
   clearHistory,
   records,
-  roughTokens,
   type HistoryRecord,
   type LlmRecord,
 } from '@/state/history';
 import { copyText } from '@/st/clipboard';
+import { hasRunningWork, stopAllRequests } from '@/stopAll';
+import { ROUGH_TOKEN_HINT, roughTokenLabel } from '@/tokens';
 
 /**
  * 请求历史页。
@@ -36,6 +37,19 @@ interface Segment {
 const filter = ref<Filter>('all');
 /** 弹窗里正在看的那一段(null = 关闭)。 */
 const viewing = ref<{ title: string; segment: Segment } | null>(null);
+
+/**
+ * 在途工作(tag 请求 / 生图)。按钮常驻、无在途时置灰 —— 位置稳定不跳动,
+ * 也让"现在能不能停"一眼可见。hasRunningWork 读的是响应式状态,故放 computed 里。
+ */
+const running = computed(() => hasRunningWork());
+
+function stopAll(): void {
+  if (!running.value) return;
+  stopAllRequests();
+  const toastr = (globalThis as Record<string, any>).toastr;
+  toastr?.info?.('已停止在途请求与后续自动尝试(本次不再重试、不再自动出图)', '柏宝绘');
+}
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'all', label: '全部' },
@@ -89,11 +103,27 @@ function tokenTitle(record: LlmRecord): string {
     : '上游返回的真实用量（usage）';
 }
 
+/**
+ * 返回段的文本。三种"没有原文"的原因必须分得清,否则又会回到
+ * "到底是没返回还是界面没显示"的困惑:
+ * - 进行中:还没回来,不是空;
+ * - 已取消:用户主动中断,上游没给完整回复;
+ * - 其余(连接失败/超时/空体):真的空。
+ */
+function responseText(record: LlmRecord): string {
+  if (record.response) return record.response;
+  if (record.status === 'running') return '（等待返回…）';
+  if (record.status === 'aborted') return '（已取消，未返回）';
+  return '（返回为空）';
+}
+
 /** 把一条记录摊成「按顺序的若干段」——展开区就是照这个顺序渲染的。 */
 function segments(record: HistoryRecord): Segment[] {
   if (record.kind === 'llm') {
     const out: Segment[] = record.messages.map(m => ({ label: m.role, text: m.content }));
-    if (record.response) out.push({ label: '返回', text: record.response });
+    // 返回段**恒推**:解析/校验失败时 HTTP 其实已经成功,原文就在 record.response 里,
+    // 旧写法 `if (record.response)` 把它藏了 —— 那正是"失败时看不到返回"的原因。
+    out.push({ label: '返回', text: responseText(record) });
     return out;
   }
   const out: Segment[] = [{ label: '正向提示词', text: record.prompt }];
@@ -169,8 +199,22 @@ function copyAll(record: HistoryRecord): void {
           </button>
         </div>
       </div>
+      <!-- 停止:独立按钮,刻意不并入上面那个分段控件(它筛的是"看哪些记录",与"停"不是一个语义) -->
       <button
-        class="bbi-btn bbi-btn-danger bbi-btn-sm"
+        class="bbi-btn bbi-btn-sm bbi-stop-btn"
+        type="button"
+        :disabled="!running"
+        :title="
+          running
+            ? '中止所有在途请求(副 API 与生图),并放弃后续的自动重试与自动出图'
+            : '当前没有在途请求'
+        "
+        @click="stopAll"
+      >
+        <Icon name="stop" /> 停止
+      </button>
+      <button
+        class="bbi-btn bbi-btn-danger bbi-btn-sm bbi-hist-clear"
         type="button"
         :disabled="!records.length"
         @click="clearHistory"
@@ -223,10 +267,7 @@ function copyAll(record: HistoryRecord): void {
             >
               <span class="bbi-prompt-role">{{ seg.label }}</span>
               <span class="bbi-prompt-preview">{{ inline(seg.text) }}</span>
-              <span
-                class="bbi-prompt-len"
-                title="本段 token 粗估（本地按字符估算，仅供段间比较，与标题行的真实用量口径不同）"
-              >≈{{ roughTokens(seg.text).toLocaleString() }}</span>
+              <span class="bbi-prompt-len" :title="ROUGH_TOKEN_HINT">{{ roughTokenLabel(seg.text) }}</span>
               <Icon name="eye" class="bbi-prompt-edit" />
             </button>
           </li>
@@ -254,7 +295,8 @@ function copyAll(record: HistoryRecord): void {
           </button>
         </header>
 
-        <pre class="bbi-hist-text">{{ viewing.segment.text }}</pre>
+        <!-- bbi-scrollbars:全局把滚动条藏了,这段全文太长时得能用鼠标拖(见 base.css 的例外说明) -->
+        <pre class="bbi-hist-text bbi-scrollbars">{{ viewing.segment.text }}</pre>
 
         <footer class="bbi-modal-foot">
           <span class="bbi-modal-foot-spacer"></span>
@@ -285,9 +327,19 @@ function copyAll(record: HistoryRecord): void {
 .bbi-hist-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* 不用 space-between:那样三个元素会被均匀推开,「停止」会飘到正中间、离分段控件老远。
+     改成靠左排 + 清空用 auto 外边距顶到最右。 */
+  justify-content: flex-start;
   gap: 12px;
   margin: 12px 0;
+}
+/* 停止:紧挨分段控件、但独立成钮 —— 间距比组内大(看得出不是一个控件),
+   又比到最右的推力近(不至于像另一个分区的按钮)。 */
+.bbi-stop-btn {
+  margin-left: 2px;
+}
+.bbi-hist-clear {
+  margin-left: auto;
 }
 
 /* —— 折叠区标题行:名称 + 渠道 + token + 时间 + 状态 ——
@@ -481,7 +533,9 @@ function copyAll(record: HistoryRecord): void {
   margin: 0;
   padding: 12px 14px;
   max-height: 52vh;
-  overflow-y: auto;
+  /* scroll 而不是 auto:常驻滑槽,内容不长时也有一条(用户要的是"看一眼就知道能不能拖",
+     不用猜这次会不会出现)。代价是常占一条十几像素的槽。 */
+  overflow-y: scroll;
   border-radius: var(--bbi-radius-sm);
   background: var(--bbi-surface-2);
   color: var(--bbi-ink);

@@ -104,33 +104,6 @@ export function truncate(text: string): string {
   return `${text.slice(0, MAX_CONTENT)}\n…(已截断，原长 ${text.length} 字符)`;
 }
 
-/** 中日韩表意文字/假名/谚文/全角标点:这些大致 1 字 = 1 token。 */
-const CJK_PATTERN =
-  /[　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿＀-￯]/;
-
-/**
- * 单段文本的 token 粗估(同步、纯本地)。
- *
- * 为什么不用 ST 的 getTokenCountAsync:那是异步 HTTP(打 /api/tokenizers/…),
- * 展开一条 8 段的记录就是 8 个请求;而这里的数字只用于**段与段之间比大小**
- * (「哪段把提示词撑爆了」),不需要精确。
- *
- * 口径:中日韩按 1 字 1 token,其余(拉丁字母/数字/符号)按 4 字符 1 token——
- * BPE 分词器的通用经验值。**必然与真实用量有出入**,故 UI 上一律带 ≈ 显示,
- * 也不要拿各段之和去对标题行那个真值(那是上游 usage,口径不同)。
- */
-export function roughTokens(text: string): number {
-  if (!text) return 0;
-  let cjk = 0;
-  let rest = 0;
-  // for...of 按码点遍历,代理对(emoji/罕见汉字)算一个字符而非两个
-  for (const ch of text) {
-    if (CJK_PATTERN.test(ch)) cjk++;
-    else rest++;
-  }
-  return Math.round(cjk + rest / 4);
-}
-
 function truncateMessages(messages: ChatMsg[]): ChatMsg[] {
   if (!Array.isArray(messages)) return [];
   return messages.map(m => ({ role: m.role, content: truncate(m.content) }));
