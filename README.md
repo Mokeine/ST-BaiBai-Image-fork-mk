@@ -1,8 +1,8 @@
 # 柏宝绘mk个人改版fork
 
-**来源与授权**：本项目是 [baibai-git/ST-BaiBai-Image](https://github.com/baibai-git/ST-BaiBai-Image) 的个人改版分支（非官方 fork），原项目的著作权与署名归原作者柏柏所有
+**来源与授权**：本项目是 [baibai-git/ST-BaiBai-Image](https://github.com/baibai-git/ST-BaiBai-Image) 的个人改版分支（非官方 fork），项目的著作权与署名归原作者柏柏所有
 
-本分支的姿态是**非官方、非商业、不改署名**。若原作者对分享有任何异议（要求指定许可证、补充署名方式，或要求撤下），请在本仓库提 issue 或联系我，我会**立即照办**（转私有或删除）。
+本分支**非官方、非商业**。
 
 **插件原有功能的说明 —— 安装、ComfyUI / NovelAI 渠道、角色外貌库、图库等 —— 见[上游 README](https://github.com/baibai-git/ST-BaiBai-Image#readme)**，本文件不重复它们。
 
@@ -34,7 +34,6 @@
 
 - **原版**：设置页「自定义提示词」是一张固定列表，只有 6 项（破限词、ComfyUI 规范、ComfyUI 思维链、NAI 规范、NAI 思维链、预填充），每项点开在一个弹窗里改全文，留空 = 回落内置默认。**发出去的消息顺序写死在代码里**：破限 → 角色卡 → persona → 世界书 → 后端规范 → 固定协议 → 思维链 → user → assistant 预填充。
 - **现在**：默认预设是 18 条消息块：破限词、角色卡设定、玩家人设、世界书设定、ComfyUI 规范、NAI 规范、NAI 规范(4 系)、固定输出协议、ComfyUI 思维链、NAI 思维链、NAI 思维链(4 系)、记忆、角色外貌库、服装库、任务备注、上下文、目标正文、预填充。**每条都能改名、换角色（system/user/assistant）、调顺序、单独停用、删除，也能新增块** —— 谁在第几条、以什么身份发出去，由块决定，不再由代码决定。
-- **为什么**：原来"消息顺序"是个用户既看不到也改不了的产品决策；想调整只能等上游改代码。块化之后这件事归用户，也让"某块内容不想要"从"整份规范删掉一段"变成"关掉一个开关"。
 - **依据**：`fb93757` · `src/state/settings.ts`（`AutoTagPromptBlock` / `AutoTagPromptConfig` / `defaultPromptPreset()`）· `src/state/defaultPreset.ts`（18 块数据）· `architecture.md` §5「消息组装 = 消息块」
 
 ![设置 → 自定义提示词：每条消息块一行，显示角色、名称、正文开头、token 粗估与启停开关；顺序即发送顺序](docs/images/prompt-blocks.png)
@@ -47,14 +46,12 @@
   - **协议类 5 个**：`{{output_shape}}` `{{image_count_rule}}` `{{content_rule}}` `{{negative_rule}}` `{{character_rule}}`
   - **片段宏 1 个**：`{{nl}}`（生成自然语言规范）
   取不到的变量渲染为空串；**块引用的内容变量全部没值 → 整块不发**（沿用旧版"抓不到角色卡就不发那条消息"的口径）；片段宏不参与这个判定，否则关掉自然语言会把整份规范一起吞掉。
-- **为什么**：让用户能写出"跟着当前设置走"的块，而不是把角色卡、世界书、目标正文复制粘贴进模板（那些内容每轮都不同，粘进去等于写死）。跳过判定则避免"引用了没值的变量 → 发一条空消息给模型"。
 - **依据**：`fb93757` · `src/autoTag/promptVars.ts`（`PROMPT_VARIABLES` 16 条）· `src/autoTag/promptRender.ts`（`renderPresetBlocks()` 的三种跳过原因）· `architecture.md` §5 变量段
 
 ### 1.3 酒馆宏真正生效（副 API 渠道下也生效）
 
 - **原版**：走副 API 渠道时请求由插件直接构造，**绕开了酒馆**，所以块里写 `{{roll 1999999}}`、`{{char}}`、`{{time}}` 这些酒馆宏会被原样发给模型（只有跟随主 API 时才由酒馆展开）。
 - **现在**：块文本先过插件变量，再把结果交给 `getContext().substituteParams` 逐块展宏 —— **顺序不能反**（`{{char_card}}` 这类插件变量酒馆不认识，先给它只会被原样留下或吞掉）。展宏发生在"空块判定"之前：一个只剩 `{{roll}}` 的块展宏后就不空了。
-- **为什么**：副 API 是常用路径，宏在这条路上"看起来能用其实不能用"是最坏的一种状态。
 - **依据**：`e7f9ebc` · `src/autoTag/prompt.ts`（`buildAutoTagAssembly()` 取 `substituteParams` 传进渲染）· `src/autoTag/promptRender.ts`（`renderTemplate()` 的 `expandMacros`）· `architecture.md` §5「酒馆宏会被展开」
 
 ### 1.4 预览：发出去之前先看一眼
@@ -81,29 +78,25 @@
   - **自有格式**：导出当前预设或全部预设为 `baibai-prompt-*.json`（`format: "baibai-prompt-presets"`，自包含；连"固定输出协议"块的内置标记一起带走，导入回来仍能用「恢复内置默认」）；
   - **兼容智绘姬**：可直接导入 st-chatu8「上下文配置」导出的 JSON（`{预设名: {entries: [...]}}`）。原本按**触发词**发送的条目导入为**停用** —— 本插件没有触发词能力，照搬 `enabled=true` 会让原本只在该关键词下才发的内容变成常开，静默改变行为；
   - 导入前有预览与警告摘要（哪条被丢弃、几条因触发模式被停用、重名时是否覆盖），重名副本自动起不撞的名字（`名字(导入)`）。
-- **为什么**：提示词是这类插件里最值钱的自定义资产，既要有自己的分享格式，也要能吃下隔壁插件已有的积累。
 - **依据**：`fb93757` · `src/autoTag/promptPreset.ts`（`parseChatu8Presets()` / `parseBaibaiPresets()` / `parsePresetFile()`）
 
 ### 1.7 「预填充」降级为普通块，渠道里的「发送预填充」删除
 
 - **原版**：预填充是一条固定 assistant 消息，**位置强制最后、不可删**，发不发由**渠道设置**里的「发送预填充」复选框决定；发送侧还有一层保险：末尾是 assistant 就丢掉那条。
 - **现在**：预填充就是一条**普通消息块** —— 开关看自己存的值、角色可改、位置可拖、可以删。渠道设置里的「发送预填充」复选框**整体删除**，发送侧那层"末尾 assistant 就丢"的逻辑也删了。
-- **为什么**：① 同一件事由两处（渠道 + 预设）共同决定，既难解释也难排查；② 那层"末尾 assistant 就丢"会**连坐** —— 实测把预填充块**前面**用户自己写的那条 assistant 破限块（9601 字）整块丢掉，而用户只是关掉了预填充。
 - **存量迁移**：带 `builtin:'prefill'`（或 0.4.x 的固定 id `blk_prefill`）的块在归一化时摘掉标记，并把 `enabled` 落定为**迁移当下的实际生效状态**（老渠道 `prefill === false` → 落成关），免得升级瞬间那段 `<thinking>` 突然开始发或突然不发。判据刻意读**原始存量对象**（`normalizeChannel` 跑过之后 `prefill` 键已不存在，读它只会恒判为开）。
 - **依据**：`e7f9ebc` · `src/state/settings.ts`（`normalizePromptBlock()` 的 prefill 分支、`legacyPrefillEnabled` / `legacyPrefillKnown`、`normalizeChannel()` 去掉 `prefill`）· `src/api/client.ts`（`requestCompletionAtUrl()` 不再按末尾 assistant 切片）· `src/state/settings.promptBlocksMigration.test.ts` · `architecture.md` §5「预填充块已降级为普通块」
 
 ### 1.8 默认预设 = 出厂基准（数据化），且切后端不再自动换规范
 
 - **原版**：内置默认散在 `state/settings.ts` 的 `DEFAULT_*` 常量里，规范/思维链按**当前后端**在代码里二选一。
-- **现在**：默认预设由 `src/state/defaultPreset.ts` 的块数据物化，**只读仓库内置提示词、不读用户那 6 个旧字段** —— 「恢复默认」必须给出真正的仓库版本，否则用户拿到的是一份"带着自己旧改动"的伪默认，既没法比对也没法当干净起点。规范/思维链仍按**迁移当下的后端与模型**只启用匹配的那一对，之后由用户在块上开关：**切换出图后端不会自动换规范**（块是预设的一部分，由预设作者决定）。
-- **为什么**：默认值要能当基准用；而"切后端自动换规范"在块化之后会变成"悄悄改用户排好的预设"，比不换更糟。
+- **现在**：默认预设由 `src/state/defaultPreset.ts` 的块数据物化，**只读仓库内置提示词、不读用户那 6 个旧字段**。规范/思维链仍按**迁移当下的后端与模型**只启用匹配的那一对，之后由用户在块上开关：**切换出图后端不会自动换规范**（块是预设的一部分，由预设作者决定）。
 - **依据**：`e7f9ebc` · `src/state/defaultPreset.ts` · `src/state/settings.ts` 的 `defaultPromptPreset(backend, naiModel)` · `architecture.md` §5
 
 ### 1.9 那 6 个旧字段变成"纯存档"
 
 - **原版**：那 6 项就是编辑入口。
 - **现在**：界面不再提供入口，原值留在设置里（**退回旧版本仍然生效**），但**不再流进默认预设**。底层 `autoTag.prompts` 的 8 个键（含已下线的 `naiSpec` / `naiThinking`）原样保留。
-- **为什么**：直接删字段会让"退回旧版本"这条路断掉；留着又不能让它们继续影响新装配 —— 于是当存档。
 - **依据**：`e7f9ebc` · `src/state/settings.ts`（`AutoTagPrompts` 的注释「0.4.0 起仅作迁移来源与回退保留」）· `architecture.md` §5「6 个旧字段是纯存档」
 
 ### 1.10 块排序：桌面拖拽 + 可选的上下移按钮
@@ -149,7 +142,6 @@
   - 落库紧跟"正文写回成功"之后（`applyOutfitReports`），**失败分支一律不写**；
   - AI 更新到全局条目时，在本聊天生成一条**覆盖条目** —— "这个故事里变了"不污染别的故事；
   - 报告里的子标签字面量会被拦掉（免得污染后续注入文本），坏条目只丢这一条，绝不连累 `images`。
-- **为什么**：缺省被补成空串，就会变成"每次生成都抹掉用户手填的状态"—— 这个区分是硬要求，有单测锁定。
 - **依据**：`6d4a71b` · `src/autoTag/protocol.ts`（`OutfitReport` / `parseOutfits()`）· `src/state/outfitTags.ts`（`applyOutfitReports()`）· `src/autoTag/runner.ts` · `architecture.md` §7
 
 ### 2.4 怎么发给 AI：`{{outfit_library}}`，且由预设决定是否启用
@@ -322,9 +314,7 @@
 | `e7f9ebc` | 默认预设数据化、预填充联动移除与酒馆宏展开、装备建档协议、悬浮球加载动画、界面细节 |
 | `fix:`（本条） | 两处过期文案：副 API 下酒馆宏已会展（`promptVars` 的提示）与默认预设块数不再写死（改读 `DEFAULT_PRESET_BLOCKS.length`）；并承载 fork 侧的仓库维护与文档改动 —— LF 统一（`.gitattributes`）与 CI 工作流、批准 esbuild 构建脚本、补 `@types/node`、dist 同步校验改为比对 sourcemap 内嵌源码、版本号 `0.3.0-mk.0.5.35`、README 改动说明与 4 张界面截图（均不在本文范围） |
 
-## 与上游合并时要注意的三处
-
-本 fork 目前**领先上游 10 个提交、落后 0 个**（`upstream/main` 就是分叉点）。将来合并上游时，真正影响"合并后功能是否正常"的是下面三处，与版本号无关：
+## 注意
 
 1. **`dist/**` 不手工解冲突** —— 解完 `src/` 后整体重建（`node scripts/check-dist-sync.mjs` 先看是否陈旧，再 `pnpm run build`），否则会出现"同一版本号对应两套 dist"。
 2. **`src/state/settings.ts` 的 `normalize()` 迁移链** —— 本 fork 在这里加了 `promptConfig` 物化与 `builtin:'prefill'` 降级，上游也会继续往同一段加迁移；两边改的是不同行，git 不报红但语义可能静默错。解完**必须跑 `pnpm run test`**（`settings.promptBlocksMigration.test.ts` 等是这条链的回归锁）。
